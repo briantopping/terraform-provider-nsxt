@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/vmware/vsphere-automation-sdk-go/lib/vapi/std/errors"
 	"github.com/vmware/vsphere-automation-sdk-go/services/nsxt-mp/nsx"
 	nsxModel "github.com/vmware/vsphere-automation-sdk-go/services/nsxt-mp/nsx/model"
@@ -42,10 +43,11 @@ func resourceNsxtUpgradePrepare() *schema.Resource {
 				Optional:    true,
 			},
 			"upgrade_bundle_url": {
-				Type:        schema.TypeString,
-				Description: "URL of the NSXT Upgrade bundle",
-				Required:    true,
-				ForceNew:    true,
+				Type:         schema.TypeString,
+				Description:  "URL of the NSXT Upgrade bundle",
+				Required:     true,
+				ForceNew:     true,
+				ValidateFunc: validation.StringIsNotEmpty,
 			},
 			"precheck_bundle_url": {
 				Type:        schema.TypeString,
@@ -129,10 +131,7 @@ func resourceNsxtUpgradePrepare() *schema.Resource {
 }
 
 func resourceNsxtUpgradePrepareCreate(d *schema.ResourceData, m interface{}) error {
-	id := d.Id()
-	if id == "" {
-		id = newUUID()
-	}
+	id := util.GetVerifiableID(newUUID(), "nsxt_upgrade_prepare")
 	err := prepareForUpgrade(d, m)
 	if err != nil {
 		return handleCreateError("NsxtUpgradePrepare", id, err)
@@ -309,6 +308,8 @@ func uploadUpgradeBundle(d *schema.ResourceData, m interface{}, bundleType strin
 	bundleID, err := client.Create(bundleFetchRequest, nil)
 	if err != nil {
 		return fmt.Errorf("Failed to upload upgrade bundle of type %s: %v", bundleType, err)
+	} else if bundleID.BundleId == nil {
+		return fmt.Errorf("Failed to upload upgrade bundle of type %s: bundle is apparently invalid", bundleType)
 	}
 	return waitForBundleUpload(m, *bundleID.BundleId, timeout)
 }
@@ -413,6 +414,9 @@ func waitForBundleUpload(m interface{}, bundleID string, timeout int) error {
 			}
 
 			log.Printf("[DEBUG] Current status for uploading bundle %s is %s", bundleID, *state.Status)
+			if *state.Status == nsxModel.UpgradeBundleUploadStatus_STATUS_FAILED {
+				return state, nsxModel.UpgradeBundleUploadStatus_STATUS_FAILED, fmt.Errorf(*state.DetailedStatus)
+			}
 
 			return state, *state.Status, nil
 		},
